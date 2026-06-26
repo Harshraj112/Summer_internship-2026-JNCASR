@@ -356,7 +356,7 @@ class ThermalApp:
         self.capture_btn.grid(row=0, column=0, padx=8, pady=4)
 
         self.record_btn = self._make_button(
-            controls, "⏺  Record", self.COLORS["red"], self._on_toggle_record
+            controls, " Record", self.COLORS["red"], self._on_toggle_record
         )
         self.record_btn.grid(row=0, column=1, padx=8, pady=4)
 
