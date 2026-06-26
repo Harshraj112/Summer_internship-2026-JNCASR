@@ -1,4 +1,3 @@
-
 """
 Seek Thermal - Live GUI
 ========================
@@ -7,21 +6,22 @@ A Tkinter GUI wrapper around the original Seek Thermal OpenCV sample.
 
 Buttons
 -------
-- Capture          : grabs the raw per-pixel temperature grid straight from
-                      the camera -> saves it to CSV -> THEN builds and saves
-                      a PNG image from that same CSV data (never from a
-                      screenshot of the live preview). One click = one
-                      CSV + one PNG, always in that order.
+- Capture           : grabs the raw per-pixel temperature grid straight from
+                       the camera -> saves it to CSV -> THEN builds and saves
+                       a PNG image from that same CSV data (never from a
+                       screenshot of the live preview). One click = one
+                       CSV + one PNG, always in that order.
 - Record / Stop     : repeats the exact same "pixels -> CSV -> image" pair
-                      on a timer for as long as recording is on (saved into
-                      a timestamped session folder under recordings/), and
-                      additionally stitches a smooth video (video.mp4) built
-                      frame-by-frame from the raw thermal data so you also
-                      get a normal video file out of the session.
-- Rotate            : cycles the orientation correction through all 4 sides
-                      (0, 90, 180, 270 degrees) instead of a fixed constant.
-                      Applies to the live preview, the saved CSV grids, the
-                      saved images, and the recorded video.
+                       on a timer for as long as recording is on (saved into
+                       a timestamped session folder under recordings/), and
+                       additionally stitches a smooth video (video.mp4) built
+                       frame-by-frame from the raw thermal data so you also
+                       get a normal video file out of the session.
+- Rotate CW / CCW   : cycles the orientation correction clockwise or
+                       counterclockwise through all 4 stops (0, 90, 180, 270
+                       degrees). Applies to the live preview, the saved CSV
+                       grids, the saved images, and the recorded video.
+                       Default orientation is 0° (no rotation).
 
 New dependency vs. the original script: Pillow (PIL), used to push OpenCV
 frames into a Tkinter label.
@@ -58,16 +58,16 @@ from seekcamera import (
 SCREENSHOT_DIR = "screenshots"          # manual Capture -> PNGs land here
 PIXEL_CSV_DIR = "pixel_captures"        # manual Capture -> CSVs land here
 RECORDING_DIR = "recordings"            # Record sessions (video + their own
-                                         # CSV/PNG subfolders) land here
+                                        # CSV/PNG subfolders) land here
 
 PIXEL_CAPTURE_INTERVAL = 1.0            # background "keep a fresh grid" cadence
-RECORD_CAPTURE_INTERVAL = 1.0           # how often a CSV+image pair is saved
-                                         # while a Record session is running
+RECORD_CAPTURE_INTERVAL = 1.0          # how often a CSV+image pair is saved
+                                        # while a Record session is running
 PREVIEW_FPS_MS = 33                     # ~30 fps GUI refresh / video fps
 
 CSV_IMAGE_COLORMAP = cv2.COLORMAP_INFERNO
 
-# The 4 orientation states the Rotate button cycles through, in order.
+# The 4 orientation states the Rotate buttons cycle through, in order.
 ROTATIONS = [
     None,                            # 0 degrees
     cv2.ROTATE_90_CLOCKWISE,         # 90 degrees
@@ -76,8 +76,8 @@ ROTATIONS = [
 ]
 ROTATION_LABELS = ["0°", "90°", "180°", "270°"]
 
-# Start at 90 deg clockwise to match the original script's default mount fix.
-DEFAULT_ROTATION_INDEX = 1
+# FIX 1: Start at 0° (no rotation) instead of the old default of 90° CW.
+DEFAULT_ROTATION_INDEX = 0
 
 
 def apply_rotation(frame, rotation):
@@ -257,8 +257,10 @@ def capture_csv_then_image(renderer, csv_dir=PIXEL_CSV_DIR, img_dir=SCREENSHOT_D
     Returns (csv_path, image_path), either of which may be None on failure.
     """
     pixel_grid = capture_pixels_from_camera(renderer)
+    # FIX 2: numpy arrays cannot be used with 'or' because their truth value
+    # is ambiguous.  Use an explicit None check instead.
     if pixel_grid is None:
-        pixel_grid = renderer.last_thermal_pixels  # fall back to last known
+        pixel_grid = renderer.last_thermal_pixels
     capture_time = renderer.last_pixel_capture_time or datetime.now()
 
     csv_path = save_pixel_csv(pixel_grid, capture_time, directory=csv_dir)
@@ -282,6 +284,7 @@ class ThermalApp:
         "blue": "#2563eb",
         "red": "#dc2626",
         "purple": "#7c3aed",
+        "green": "#16a34a",
         "gray": "#4b5563",
     }
     MAX_DISPLAY_WIDTH = 640
@@ -346,25 +349,39 @@ class ThermalApp:
         controls = tk.Frame(self.root, bg=self.COLORS["bg"])
         controls.pack(pady=(10, 4))
 
+        # Row 0 — main action buttons
         self.capture_btn = self._make_button(
             controls, " Capture", self.COLORS["blue"], self._on_capture
         )
-        self.capture_btn.grid(row=0, column=0, padx=8)
+        self.capture_btn.grid(row=0, column=0, padx=8, pady=4)
 
         self.record_btn = self._make_button(
-            controls, " Record", self.COLORS["red"], self._on_toggle_record
+            controls, "⏺  Record", self.COLORS["red"], self._on_toggle_record
         )
-        self.record_btn.grid(row=0, column=1, padx=8)
-
-        self.rotate_btn = self._make_button(
-            controls, " Rotate", self.COLORS["purple"], self._on_rotate
-        )
-        self.rotate_btn.grid(row=0, column=2, padx=8)
+        self.record_btn.grid(row=0, column=1, padx=8, pady=4)
 
         self.quit_btn = self._make_button(
             controls, " Quit", self.COLORS["gray"], self._on_close
         )
-        self.quit_btn.grid(row=0, column=3, padx=8)
+        self.quit_btn.grid(row=0, column=2, padx=8, pady=4)
+
+        # Row 1 — two rotation buttons (CCW left, CW right) with current
+        # angle shown in between.
+        self.rotate_ccw_btn = self._make_button(
+            controls, " Rotate CCW", self.COLORS["purple"], self._on_rotate_ccw
+        )
+        self.rotate_ccw_btn.grid(row=1, column=0, padx=8, pady=4)
+
+        tk.Label(
+            controls, textvariable=self.rotation_var,
+            font=("Segoe UI", 11),
+            fg=self.COLORS["muted"], bg=self.COLORS["bg"],
+        ).grid(row=1, column=1, padx=8, pady=4)
+
+        self.rotate_cw_btn = self._make_button(
+            controls, " Rotate CW", self.COLORS["purple"], self._on_rotate_cw
+        )
+        self.rotate_cw_btn.grid(row=1, column=2, padx=8, pady=4)
 
         self.status_var = tk.StringVar(value="Waiting for camera...")
         tk.Label(
@@ -380,8 +397,8 @@ class ThermalApp:
             activebackground=self._shade(color), activeforeground="white",
             relief="flat", bd=0, padx=18, pady=10, cursor="hand2",
         )
-        btn.bind("<Enter>", lambda _e: btn.configure(bg=self._shade(color)))
-        btn.bind("<Leave>", lambda _e: btn.configure(bg=color))
+        btn.bind("<Enter>", lambda _e, c=color: btn.configure(bg=self._shade(c)))
+        btn.bind("<Leave>", lambda _e, c=color: btn.configure(bg=c))
         return btn
 
     @staticmethod
@@ -405,8 +422,7 @@ class ThermalApp:
 
         now = time.time()
 
-        # Keep a "last known good" pixel grid fresh in the background,
-        # same cadence as the original script.
+        # Keep a "last known good" pixel grid fresh in the background.
         if thermal_frame is not None and now - self.last_pixel_capture >= PIXEL_CAPTURE_INTERVAL:
             capture_pixels_from_camera(self.renderer)
             self.last_pixel_capture = now
@@ -466,7 +482,11 @@ class ThermalApp:
             self._stop_recording()
 
     def _start_recording(self):
-        pixel_grid = capture_pixels_from_camera(self.renderer) or self.renderer.last_thermal_pixels
+        # FIX 2 (also here): use explicit None check instead of 'or' on a
+        # numpy array, which raises "truth value of array is ambiguous".
+        pixel_grid = capture_pixels_from_camera(self.renderer)
+        if pixel_grid is None:
+            pixel_grid = self.renderer.last_thermal_pixels
         if pixel_grid is None:
             self._set_status("Can't start recording -- no pixel data from camera yet.")
             return
@@ -496,7 +516,7 @@ class ThermalApp:
         self.last_record_capture = 0.0
         self.record_start_time = time.time()
 
-        self.record_btn.configure(text="■  Stop Recording")
+        self.record_btn.configure(text=" Stop Recording")
         self._set_status("Recording started -> {}".format(self.record_session_dir))
 
     def _record_tick(self, thermal_frame, now):
@@ -510,7 +530,7 @@ class ThermalApp:
         if frame_img is not None:
             target_h, target_w = self.record_frame_size
             if frame_img.shape[0] != target_h or frame_img.shape[1] != target_w:
-                # Orientation may have changed mid-recording (Rotate button);
+                # Orientation may have changed mid-recording (Rotate buttons);
                 # keep feeding the writer frames of the size it was opened with.
                 frame_img = cv2.resize(frame_img, (target_w, target_h))
             self.record_writer.write(frame_img)
@@ -539,7 +559,7 @@ class ThermalApp:
         if self.record_writer is not None:
             self.record_writer.release()
         self.recording = False
-        self.record_btn.configure(text="⏺  Record")
+        self.record_btn.configure(text=" Record")
         self._set_status(
             "Recording saved to {} ({} CSV+image pairs, plus video.mp4)".format(
                 self.record_session_dir, self.record_count
@@ -547,9 +567,18 @@ class ThermalApp:
         )
         self.record_writer = None
 
-    # -- Rotate button --------------------------------------------------------
-    def _on_rotate(self):
+    # -- Rotate buttons -------------------------------------------------------
+    def _on_rotate_cw(self):
+        """Advance one step clockwise (0 -> 90 -> 180 -> 270 -> 0 ...)."""
         self.renderer.rotation_index = (self.renderer.rotation_index + 1) % len(ROTATIONS)
+        self._update_rotation_label()
+
+    def _on_rotate_ccw(self):
+        """Step one back counterclockwise (0 -> 270 -> 180 -> 90 -> 0 ...)."""
+        self.renderer.rotation_index = (self.renderer.rotation_index - 1) % len(ROTATIONS)
+        self._update_rotation_label()
+
+    def _update_rotation_label(self):
         self.rotation_var.set("Rotation: {}".format(self.renderer.rotation_label))
         self._set_status("Orientation set to {}".format(self.renderer.rotation_label))
 
