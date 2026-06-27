@@ -619,7 +619,7 @@ class PipelineGUI(tk.Tk):
         self._folder_lbl = tk.Label(frow, text="  No folder selected",
                                     bg=BG, fg=TEXT_DIM, font=FONT_LABEL, anchor="w")
         self._folder_lbl.pack(side="left", fill="x", expand=True, padx=6)
-        FlatButton(frow, "Browse…", self._browse).pack(side="right")
+        FlatButton(frow, "Browse", self._browse).pack(side="right")
 
         prow = tk.Frame(ctrl, bg=BG)
         prow.pack(fill="x")
