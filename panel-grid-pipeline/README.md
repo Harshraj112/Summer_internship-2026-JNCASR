@@ -27,6 +27,9 @@ Each capture goes through the same general stages:
 As with the other pipeline, these files are an evolution rather than
 independent tools — each script/notebook built on the one before it.
 
+![Layout Stitching](../Images/Image-layout-stitching.png)
+
+
 ## File-by-file (in development order)
 
 | File | What it is |
