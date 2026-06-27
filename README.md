@@ -5,10 +5,6 @@ turning a different kind of camera capture of a panel/module into a clean,
 stitched composite — plus an `Images/` folder of reference screenshots and
 pipeline diagrams used in the docs below.
 
-> **Note on folder names:** the links below assume the project folders are
-> named `topcon-pipeline/`, `panel-grid-pipeline/`, and `seek-thermal-toolkit/`.
-> If your actual folder names differ, just update the links — the content
-> and images are otherwise unaffected.
 
 ```
 .
