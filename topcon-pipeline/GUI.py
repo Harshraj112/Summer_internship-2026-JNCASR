@@ -350,62 +350,165 @@ def run_pipeline(folder, cfg, log):
 #  GUI
 # ══════════════════════════════════════════════════════════════════
 
-class ImagePanel(ttk.Frame):
-    """A labeled, horizontally-scrollable image preview with a Save As… button."""
+class CombinedPreviewPanel(ttk.Frame):
+    """
+    A single panel holding BOTH the 'Normal' and 'Inverted' stitched
+    results, side by side in one shared canvas — Normal on the left,
+    Inverted directly to its right, both rendered at the same column
+    width like a 2-column grid — with one pair of scrollbars shared
+    by both. No separate sub-components/sub-panels are used for the
+    two results.
+    """
 
-    PREVIEW_HEIGHT = 320
 
-    def __init__(self, parent, title, on_save):
+    LABEL_HEIGHT = 26         # space reserved above each column's title text
+    COL_GAP = 24              # horizontal gap between the Normal / Inverted columns
+    VIEW_HEIGHT = 520         # visible viewport height before vertical scrolling kicks in
+    MIN_COL_WIDTH = 200       # never shrink a column smaller than this
+
+    def __init__(self, parent, on_save_normal, on_save_inverted, on_save_both):
         super().__init__(parent, padding=6)
-        self.rgb_array = None
-        self._photo = None  # keep a reference so it isn't garbage-collected
+        self.normal_rgb = None
+        self.inverted_rgb = None
+        self._photo_normal = None   # keep references so they aren't GC'd
+        self._photo_inverted = None
 
+        # -- Header: title + the three save actions, all in one row --
         header = ttk.Frame(self)
         header.pack(fill="x")
-        ttk.Label(header, text=title, font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.dims_label = ttk.Label(header, text="", foreground="#888")
-        self.dims_label.pack(side="left", padx=8)
-        ttk.Button(header, text=" Save As", command=on_save).pack(side="right")
+        ttk.Label(header, text="Results", font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.info_label = ttk.Label(header, text="", foreground="#888")
+        self.info_label.pack(side="left", padx=8)
 
+        ttk.Button(header, text="💾 Save Both To Folder…", command=on_save_both).pack(side="right", padx=(4, 0))
+        ttk.Button(header, text="💾 Save Inverted", command=on_save_inverted).pack(side="right", padx=4)
+        ttk.Button(header, text="💾 Save Normal", command=on_save_normal).pack(side="right", padx=4)
+
+        # -- Body: ONE canvas, ONE pair of scrollbars, two GRID columns --
+        # Normal sits on the left, Inverted sits directly to its right,
+        # both rendered at the SAME column width — a true 2-column grid,
+        # not two separate stacked components.
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, pady=(4, 0))
 
-        self.canvas = tk.Canvas(body, bg="#2b2b2b", height=self.PREVIEW_HEIGHT,
+        self.canvas = tk.Canvas(body, bg="#2b2b2b", height=self.VIEW_HEIGHT,
                                  highlightthickness=1, highlightbackground="#444")
+        vbar = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
         hbar = ttk.Scrollbar(body, orient="horizontal", command=self.canvas.xview)
-        self.canvas.configure(xscrollcommand=hbar.set)
-        self.canvas.pack(fill="both", expand=True)
-        hbar.pack(fill="x")
+        self.canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
 
-        self.placeholder = self.canvas.create_text(
-            10, self.PREVIEW_HEIGHT // 2, anchor="w",
-            text="No output yet — process some images first.",
-            fill="#888", font=("Segoe UI", 9)
-        )
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        vbar.grid(row=0, column=1, sticky="ns")
+        hbar.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
 
-    def set_image(self, rgb_array):
-        self.rgb_array = rgb_array
-        h, w = rgb_array.shape[:2]
-        scale = self.PREVIEW_HEIGHT / h
-        new_w = max(1, int(w * scale))
-        pil_img = Image.fromarray(rgb_array).resize((new_w, self.PREVIEW_HEIGHT), Image.LANCZOS)
-        self._photo = ImageTk.PhotoImage(pil_img)
+        # Mouse-wheel scrolling while hovering the canvas (Win/Mac + Linux)
+        self.canvas.bind("<Enter>", lambda e: self._bind_wheel())
+        self.canvas.bind("<Leave>", lambda e: self._unbind_wheel())
 
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
-        self.canvas.configure(scrollregion=(0, 0, new_w, self.PREVIEW_HEIGHT))
-        self.dims_label.configure(text=f"{w} × {h} px (full resolution saved)")
+        # Re-render at the new column width whenever the panel is resized,
+        # so the grid stays responsive instead of leaving empty space.
+        self.canvas.bind("<Configure>", self._on_resize)
 
-    def clear(self):
-        self.rgb_array = None
-        self._photo = None
+        self._draw_placeholder()
+
+    def _bind_wheel(self):
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+    def _unbind_wheel(self):
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
+
+    def _on_mousewheel(self, event):
+        if getattr(event, "num", None) == 4:
+            self.canvas.yview_scroll(-3, "units")
+        elif getattr(event, "num", None) == 5:
+            self.canvas.yview_scroll(3, "units")
+        else:
+            self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _on_resize(self, event):
+        if self.normal_rgb is not None and self.inverted_rgb is not None:
+            self._render()
+
+    # -- internal drawing helpers ------------------------------------
+    def _draw_placeholder(self):
         self.canvas.delete("all")
         self.canvas.create_text(
-            10, self.PREVIEW_HEIGHT // 2, anchor="w",
+            10, self.VIEW_HEIGHT // 2, anchor="w",
             text="No output yet — process some images first.",
             fill="#888", font=("Segoe UI", 9)
         )
-        self.dims_label.configure(text="")
+        self.canvas.configure(scrollregion=(0, 0, 0, self.VIEW_HEIGHT))
+        self.info_label.configure(text="")
+
+    def _col_width(self):
+        canvas_w = self.canvas.winfo_width()
+        if canvas_w < 10:
+            canvas_w = 900  # not laid out yet — reasonable fallback
+        col_w = (canvas_w - self.COL_GAP) // 2
+        return max(self.MIN_COL_WIDTH, col_w)
+
+    def _scaled_photo(self, rgb_array, target_w):
+        h, w = rgb_array.shape[:2]
+        scale = target_w / w
+        new_h = max(1, int(h * scale))
+        pil_img = Image.fromarray(rgb_array).resize((target_w, new_h), Image.LANCZOS)
+        return ImageTk.PhotoImage(pil_img), new_h
+
+    def set_images(self, normal_rgb, inverted_rgb):
+        self.normal_rgb = normal_rgb
+        self.inverted_rgb = inverted_rgb
+        self._render()
+
+    def _render(self):
+        col_w = self._col_width()
+        self._photo_normal, h_normal = self._scaled_photo(self.normal_rgb, col_w)
+        self._photo_inverted, h_inverted = self._scaled_photo(self.inverted_rgb, col_w)
+        nh, nw = self.normal_rgb.shape[:2]
+        ih, iw = self.inverted_rgb.shape[:2]
+
+        self.canvas.delete("all")
+
+        # -- Column 1 : Normal (left) --------------------------------
+        self.canvas.create_text(
+            8, self.LABEL_HEIGHT // 2, anchor="w",
+            text=f"Normal  —  {nw} × {nh} px (full resolution saved)",
+            fill="#d4d4d4", font=("Segoe UI", 9, "bold")
+        )
+        self.canvas.create_image(0, self.LABEL_HEIGHT, anchor="nw", image=self._photo_normal)
+
+        # -- Column 2 : Inverted (right, right next to Normal) -------
+        x_inverted = col_w + self.COL_GAP
+        self.canvas.create_text(
+            x_inverted + 8, self.LABEL_HEIGHT // 2, anchor="w",
+            text=f"Inverted  —  {iw} × {ih} px (full resolution saved)",
+            fill="#d4d4d4", font=("Segoe UI", 9, "bold")
+        )
+        self.canvas.create_image(x_inverted, self.LABEL_HEIGHT, anchor="nw", image=self._photo_inverted)
+
+        # -- Divider between the two grid columns ----------------------
+        max_h = max(h_normal, h_inverted)
+        x_div = col_w + self.COL_GAP // 2
+        self.canvas.create_line(x_div, 0, x_div, self.LABEL_HEIGHT + max_h, fill="#444", dash=(3, 2))
+
+        total_w = x_inverted + col_w
+        total_h = self.LABEL_HEIGHT + max_h
+        self.canvas.configure(scrollregion=(0, 0, total_w, total_h))
+        self.info_label.configure(
+            text="Normal (left) & Inverted (right) side by side — scroll for full resolution"
+        )
+
+    def clear(self):
+        self.normal_rgb = None
+        self.inverted_rgb = None
+        self._photo_normal = None
+        self._photo_inverted = None
+        self._draw_placeholder()
 
 
 class App(tk.Tk):
@@ -468,16 +571,10 @@ class App(tk.Tk):
         paned.add(log_frame, weight=2)
 
         out_frame = ttk.LabelFrame(paned, text="2. Output preview")
-        self.normal_panel = ImagePanel(out_frame, "Normal", self._save_normal)
-        self.normal_panel.pack(fill="both", expand=True)
-        ttk.Separator(out_frame).pack(fill="x", pady=4)
-        self.inverted_panel = ImagePanel(out_frame, "Inverted", self._save_inverted)
-        self.inverted_panel.pack(fill="both", expand=True)
-
-        save_both_row = ttk.Frame(out_frame)
-        save_both_row.pack(fill="x", pady=(4, 8))
-        ttk.Button(save_both_row, text="💾 Save Both To Folder…",
-                   command=self._save_both).pack(side="right", padx=8)
+        self.preview_panel = CombinedPreviewPanel(
+            out_frame, self._save_normal, self._save_inverted, self._save_both
+        )
+        self.preview_panel.pack(fill="both", expand=True)
 
         paned.add(out_frame, weight=3)
 
@@ -572,8 +669,7 @@ class App(tk.Tk):
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
-        self.normal_panel.clear()
-        self.inverted_panel.clear()
+        self.preview_panel.clear()
         self.normal_rgb = None
         self.inverted_rgb = None
 
@@ -603,8 +699,7 @@ class App(tk.Tk):
         self.process_btn.configure(state="normal")
         self.normal_rgb = normal
         self.inverted_rgb = inverted
-        self.normal_panel.set_image(normal)
-        self.inverted_panel.set_image(inverted)
+        self.preview_panel.set_images(normal, inverted)
         self.status_var.set(f"Done — processed: {', '.join(stems)}")
 
     def _on_processing_error(self, error_message):
