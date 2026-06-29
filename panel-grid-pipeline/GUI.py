@@ -266,9 +266,9 @@ class ZoomCanvas(tk.Frame):
                                   font=FONT_SMALL)
         self._zoom_lbl.pack(side="right", padx=10)
 
-        hint = ("Scroll = pan   •   Ctrl+scroll = zoom   •   Drag = pan"
+        hint = ("Scroll = zoom   •   Drag = pan"
                 if _IS_WIN else
-                "Two-finger swipe = pan   •   Ctrl+swipe = zoom   •   Drag = pan")
+                "Two-finger swipe = zoom   •   Drag = pan")
         tk.Label(bar, text=hint, bg=PANEL, fg=TEXT_DIM,
                  font=FONT_HINT).pack(side="right", padx=16)
 
@@ -309,17 +309,12 @@ class ZoomCanvas(tk.Frame):
     # ── Gesture handlers ─────────────────────────────────────────────────────
 
     def _pan_y_win(self, event):
-        if event.state & 0x0004:          # Ctrl held → zoom
-            self._do_zoom(_raw_delta(event), event.x, event.y)
-            return
-        units = self._pan_y_acc.feed(_raw_delta(event))
-        if units:
-            self.canvas.yview_scroll(-units, "units")
+        # Plain scroll / two-finger swipe now zooms directly (no Ctrl needed)
+        self._do_zoom(_raw_delta(event), event.x, event.y)
 
     def _pan_y_lin(self, event):
-        units = self._pan_y_acc.feed(_raw_delta(event))
-        if units:
-            self.canvas.yview_scroll(-units, "units")
+        # Plain scroll / two-finger swipe now zooms directly (no Ctrl needed)
+        self._do_zoom(_raw_delta(event), event.x, event.y)
 
     def _pan_x_win(self, event):
         units = self._pan_x_acc.feed(_raw_delta(event))
@@ -485,8 +480,17 @@ class ZoomCanvas(tk.Frame):
         resized     = self._pil_src.resize((w, h), resample)
         self._photo = ImageTk.PhotoImage(resized)
         self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
-        self.canvas.configure(scrollregion=(0, 0, w, h))
+
+        # Centre the image inside the canvas when it's smaller than the
+        # visible area; once it's larger than the canvas it behaves as
+        # before (anchored at 0,0 so panning/scrolling math stays correct).
+        cw = max(self.canvas.winfo_width(),  1)
+        ch = max(self.canvas.winfo_height(), 1)
+        x0 = max(0, (cw - w) // 2)
+        y0 = max(0, (ch - h) // 2)
+
+        self.canvas.create_image(x0, y0, anchor="nw", image=self._photo)
+        self.canvas.configure(scrollregion=(0, 0, max(w, cw), max(h, ch)))
         self._zoom_lbl.config(text=f"{self._scale * 100:.0f}%")
 
     # ── Public ───────────────────────────────────────────────────────────────
@@ -654,7 +658,7 @@ class PipelineGUI(tk.Tk):
             tab2,
             text="Run the pipeline — the merged composite of all 16 images\n"
                  "will appear here (Output/<folder>/final_image.jpeg).\n\n"
-                 "Scroll = pan  •  Ctrl+scroll = zoom  •  Drag = pan",
+                 "Scroll = zoom  •  Drag = pan",
             bg=BG, fg=TEXT_DIM, font=("Segoe UI", 11), justify="center",
         )
         self._composite_ph.pack(expand=True)
